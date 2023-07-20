@@ -31,6 +31,8 @@ Options:
   after kexec is executed, use a custom ssh port to connect. Defaults to 22
 * --stop-after-disko
   exit after disko formating, you can then proceed to install manually or some other way
+* --copy-ssh <ssh key file>
+  copy ssh host key to persist dir
 * --extra-files <file...>
   files to copy into the new nixos installation
 * --disk-encryption-keys <remote_path> <local_path>
@@ -134,6 +136,10 @@ while [[ $# -gt 0 ]]; do
     ;;
   --stop-after-disko)
     stop_after_disko=y
+    ;;
+  --copy-ssh)
+    copy_ssh=$2
+    shift
     ;;
   --no-reboot)
     maybe_reboot=""
@@ -413,11 +419,18 @@ if [[ -n ${extra_files-} ]]; then
   ssh_ "chmod 755 /mnt" # rsync also changes permissions of /mnt
 fi
 
+if [[ -n ${copy_ssh-} ]]; then
+  step Copying ssh key file
+  ssh_ "mkdir -p /mnt/persist/etc/ssh"
+  rsync -rlpv -FF -e "ssh -i \"$ssh_key_dir\"/nixos-anywhere -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" "${copy_ssh}" "${ssh_connection}:/mnt/persist/etc/ssh/"
+  rsync -rlpv -FF -e "ssh -i \"$ssh_key_dir\"/nixos-anywhere -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" "${copy_ssh}.pub" "${ssh_connection}:/mnt/persist/etc/ssh/"
+fi
+
 step Installing NixOS
 ssh_ <<SSH
 set -efu ${enable_debug}
 # when running not in nixos we might miss this directory, but it's needed in the nixos chroot during installation
-export PATH=\$PATH:/run/current-system/sw/bin 
+export PATH=\$PATH:/run/current-system/sw/bin
 
 # needed for installation if initrd-secrets are used
 mkdir -p /mnt/tmp
