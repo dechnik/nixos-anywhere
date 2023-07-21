@@ -25,7 +25,7 @@ Options:
   to be asked for password entry during LUKS configuration.
 * --no-reboot
   do not reboot after installation, allowing further customization of the target installation.
-* --kexec <url>
+* --kexec <path>
   use another kexec tarball to bootstrap NixOS
 * --post-kexec-ssh-port <ssh_port>
   after kexec is executed, use a custom ssh port to connect. Defaults to 22
@@ -48,6 +48,8 @@ Options:
   URL of the source Nix store to copy the nixos and disko closure from
 * --build-on-remote
   build the closure on the remote machine instead of locally and copy-closuring it
+* --vm-test
+  build the system and test the disk configuration inside a VM without installing it to the target.
 USAGE
 }
 
@@ -161,7 +163,9 @@ while [[ $# -gt 0 ]]; do
   --build-on-remote)
     build_on_remote=y
     ;;
-
+  --vm-test)
+    vm_test=y
+    ;;
   *)
     if [[ -z ${ssh_connection-} ]]; then
       ssh_connection="$1"
@@ -204,17 +208,19 @@ nix_build() {
     "$@"
 }
 
-if [[ -z ${ssh_connection-} ]]; then
-  abort "ssh-host must be set"
-fi
+if [[ -z ${vm_test-} ]]; then
+  if [[ -z ${ssh_connection-} ]]; then
+    abort "ssh-host must be set"
+  fi
 
-# we generate a temporary ssh keypair that we can use during nixos-anywhere
-ssh_key_dir=$(mktemp -d)
-trap 'rm -rf "$ssh_key_dir"' EXIT
-mkdir -p "$ssh_key_dir"
-# ssh-copy-id requires this directory
-mkdir -p "$HOME/.ssh/"
-ssh-keygen -t ed25519 -f "$ssh_key_dir"/nixos-anywhere -P "" -C "nixos-anywhere" >/dev/null
+  # we generate a temporary ssh keypair that we can use during nixos-anywhere
+  ssh_key_dir=$(mktemp -d)
+  trap 'rm -rf "$ssh_key_dir"' EXIT
+  mkdir -p "$ssh_key_dir"
+  # ssh-copy-id requires this directory
+  mkdir -p "$HOME/.ssh/"
+  ssh-keygen -t ed25519 -f "$ssh_key_dir"/nixos-anywhere -P "" -C "nixos-anywhere" >/dev/null
+fi
 
 # parse flake nixos-install style syntax, get the system attr
 if [[ -n ${flake-} ]]; then
@@ -228,6 +234,14 @@ if [[ -n ${flake-} ]]; then
     exit 1
   fi
   if [[ ${build_on_remote-n} == "n" ]]; then
+    if [[ -n ${vm_test-} ]]; then
+      exec nix build \
+        --print-out-paths \
+        --no-link \
+        -L \
+        "${nix_options[@]}" \
+        "${flake}#nixosConfigurations.\"${flakeAttr}\".config.system.build.installTest"
+    fi
     disko_script=$(nix_build "${flake}#nixosConfigurations.\"${flakeAttr}\".config.system.build.diskoScript")
     nixos_system=$(nix_build "${flake}#nixosConfigurations.\"${flakeAttr}\".config.system.build.toplevel")
   fi
@@ -436,6 +450,9 @@ export PATH=\$PATH:/run/current-system/sw/bin
 mkdir -p /mnt/tmp
 chmod 777 /mnt/tmp
 nixos-install --no-root-passwd --no-channel-copy --system "$nixos_system"
+if command -v zpool >/dev/null; then
+  zpool export -a || : # we always want to export the zfs pools so people can boot from it without force import
+fi
 # We will reboot in background so we can cleanly finish the script before the hosts go down.
 # This makes integration into scripts easier
 nohup bash -c '${maybe_reboot}' >/dev/null &
