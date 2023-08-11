@@ -62,8 +62,7 @@ step() {
   echo "### $* ###"
 }
 
-default_kexec_url=https://github.com/nix-community/nixos-images/releases/download/nixos-23.05/nixos-kexec-installer-noninteractive-x86_64-linux.tar.gz
-kexec_url="$default_kexec_url"
+kexec_url=""
 enable_debug=""
 maybe_reboot="sleep 6 && reboot"
 nix_options=(
@@ -195,13 +194,13 @@ ssh_() {
 }
 
 nix_copy() {
-  NIX_SSHOPTS="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i $ssh_key_dir/nixos-anywhere" nix copy \
+  NIX_SSHOPTS="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i $ssh_key_dir/nixos-anywhere ${ssh_args[*]}" nix copy \
     "${nix_options[@]}" \
     "${nix_copy_options[@]}" \
     "$@"
 }
 nix_build() {
-  NIX_SSHOPTS="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i $ssh_key_dir/nixos-anywhere" nix build \
+  NIX_SSHOPTS="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i $ssh_key_dir/nixos-anywhere ${ssh_args[*]}" nix build \
     --print-out-paths \
     --no-link \
     "${nix_options[@]}" \
@@ -249,7 +248,6 @@ elif [[ -n ${disko_script-} ]] && [[ -n ${nixos_system-} ]]; then
   if [[ ! -e ${disko_script} ]] || [[ ! -e ${nixos_system} ]]; then
     abort "${disko_script} and ${nixos_system} must be existing store-paths"
   fi
-  :
 else
   abort "flake must be set"
 fi
@@ -343,8 +341,15 @@ if [[ ${is_os-n} != "Linux" ]]; then
 fi
 
 if [[ ${is_kexec-n} == "n" ]] && [[ ${is_installer-n} == "n" ]]; then
-  if [[ ${is_arch-n} != "x86_64" ]] && [[ $kexec_url == "$default_kexec_url" ]]; then
-    abort "The default kexec image only support x86_64 cpus. Checkout https://github.com/numtide/nixos-anywhere/#using-your-own-kexec-image for more information."
+  if [[ $kexec_url == "" ]]; then
+    case "${is_arch-unknown}" in
+    x86_64 | aarch64)
+      kexec_url="https://github.com/nix-community/nixos-images/releases/download/nixos-23.05/nixos-kexec-installer-noninteractive-${is_arch}-linux.tar.gz"
+      ;;
+    *)
+      abort "Unsupported architecture: ${is_arch}. Our default kexec images only support x86_64 and aarch64 cpus. Checkout https://github.com/numtide/nixos-anywhere/#using-your-own-kexec-image for more information."
+      ;;
+    esac
   fi
 
   step Switching system into kexec
@@ -400,7 +405,7 @@ if [[ -z ${disko_script-} ]] && [[ ${build_on_remote-n} == "y" ]]; then
   step Building disko script
   disko_script=$(
     nix_build "${flake}#nixosConfigurations.\"${flakeAttr}\".config.system.build.diskoScript" \
-      --builders "ssh://$ssh_connection?base64-ssh-public-host-key=$pubkey&ssh-key=$ssh_key_dir/nixos-anywhere $is_arch-linux"
+      --builders "ssh://$ssh_connection $is_arch-linux $ssh_key_dir/nixos-anywhere - - - - $pubkey "
   )
 fi
 step Formatting hard drive with disko
@@ -418,7 +423,7 @@ if [[ -z ${nixos_system-} ]] && [[ ${build_on_remote-n} == "y" ]]; then
   step Building the system closure
   nixos_system=$(
     nix_build "${flake}#nixosConfigurations.\"${flakeAttr}\".config.system.build.toplevel" \
-      --builders "ssh://$ssh_connection?remote-store=local?root=/mnt&base64-ssh-public-host-key=$pubkey&ssh-key=$ssh_key_dir/nixos-anywhere $is_arch-linux"
+      --builders "ssh://$ssh_connection?remote-store=local?root=/mnt $is_arch-linux $ssh_key_dir/nixos-anywhere - - - - $pubkey "
   )
 fi
 step Uploading the system closure
@@ -429,7 +434,10 @@ if [[ -n ${extra_files-} ]]; then
     extra_files="$extra_files/"
   fi
   step Copying extra files
-  rsync -rlpv -FF -e "ssh -i \"$ssh_key_dir\"/nixos-anywhere -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" "$extra_files" "${ssh_connection}:/mnt/"
+  rsync -rlpv -FF \
+    -e "ssh -i \"$ssh_key_dir\"/nixos-anywhere -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no ${ssh_args[*]}" \
+    "$extra_files" \
+    "${ssh_connection}:/mnt/"
   ssh_ "chmod 755 /mnt" # rsync also changes permissions of /mnt
 fi
 
