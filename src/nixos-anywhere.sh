@@ -445,7 +445,7 @@ if [[ -n ${copy_ssh-} ]]; then
   step Copying ssh key file
   ssh_ "mkdir -p /mnt/persist/etc/ssh"
   rsync -rlpv -FF -e "ssh -i \"$ssh_key_dir\"/nixos-anywhere -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" "${copy_ssh}" "${ssh_connection}:/mnt/persist/etc/ssh/"
-  ssh_ "chmod 400 /mnt/persist/etc/ssh/${copy_ssh}"
+  ssh_ "chmod 400 /mnt/persist/etc/ssh/ssh_host_ed25519_key"
   rsync -rlpv -FF -e "ssh -i \"$ssh_key_dir\"/nixos-anywhere -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" "${copy_ssh}.pub" "${ssh_connection}:/mnt/persist/etc/ssh/"
 fi
 
